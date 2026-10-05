@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // سجل بسيط لعدّ المستفيدين (بدون أي بيانات شخصية)
+    match /profiles/{uid} {
+      allow read: if true;
+      allow create: if signedIn() && request.auth.uid == uid;
+    }
+
+    // عدّاد عمليات الإعارة في الصفحة الرئيسية
+    match /stats/global {
+      allow read: if true;
+      allow create: if signedIn()
+                    && request.resource.data.keys().hasOnly(['loans'])
+                    && request.resource.data.loans == 1;
+      allow update: if signedIn()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['loans'])
+                    && request.resource.data.loans == resource.data.loans + 1;
+    }
+
+    // المستلزمات: الجميع يقرأ، والمالك فقط يضيف ويعدل ويحذف
+    match /items/{id} {
+      allow read: if true;
+      allow create: if signedIn()
+                    && request.resource.data.owner_id == request.auth.uid
+                    && request.resource.data.status == 'available'
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() >= 2
+                    && request.resource.data.name.size() <= 80;
+      allow update: if signedIn()
+                    && resource.data.owner_id == request.auth.uid
+                    && request.resource.data.owner_id == request.auth.uid;
+      allow delete: if signedIn() && resource.data.owner_id == request.auth.uid;
+    }
+
+    // الطلبات: يراها صاحب الطلب ومالك المستلزم فقط
+    match /requests/{id} {
+      allow read: if signedIn()
+                  && (resource.data.requester_id == request.auth.uid
+                      || resource.data.item_owner_id == request.auth.uid);
+      allow create: if signedIn()
+                    && request.resource.data.requester_id == request.auth.uid
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.item_owner_id != request.auth.uid
+                    && get(/databases/$(database)/documents/items/$(request.resource.data.item_id)).data.owner_id
+                         == request.resource.data.item_owner_id
+                    && get(/databases/$(database)/documents/items/$(request.resource.data.item_id)).data.status
+                         == 'available';
+      allow update: if signedIn()
+                    && resource.data.item_owner_id == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'owner_contact']);
+      allow delete: if signedIn() && resource.data.item_owner_id == request.auth.uid;
+    }
+  }
+}
